@@ -1,57 +1,28 @@
-####################################################################################################
-## Builder
-####################################################################################################
-FROM rust:1.92.0-bookworm AS builder
-RUN apt update && apt install -y libssl-dev pkg-config libz-dev libcurl4 postgresql
-RUN update-ca-certificates
+# ---- Build stage ----
+FROM rust:1.72 as builder
 
-# Create appuser
-ENV USER=bot
-ENV UID=10001
+WORKDIR /app
 
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "${UID}" \
-    "${USER}"
+COPY . .
 
-WORKDIR /bot
-
-COPY ./ .
-
-RUN cargo install diesel_cli --no-default-features --features postgres
-
+# Собираем release-бинарники
 RUN cargo build --release
 
-####################################################################################################
-## Final image
-####################################################################################################
-FROM debian:bookworm-slim
+# ---- Final stage ----
+FROM debian:bullseye-slim
 
-RUN apt update && apt install -y postgresql
+WORKDIR /app
 
-# Import from builder.
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
+# Копируем бинарники из билдера
+COPY --from=builder /app/target/release/bot ./bot
+COPY --from=builder /app/target/release/sync ./sync
+COPY --from=builder /app/target/release/deliver ./deliver
 
-WORKDIR /bot
+# Копируем entrypoint
+COPY entrypoint.sh .
 
-# Copy our build
-COPY --from=builder /bot/target/release/el_monitorro ./
-COPY --from=builder /bot/target/release/deliver ./
-COPY --from=builder /bot/target/release/sync ./
-COPY --from=builder /bot/target/release/cleaner ./
+# Делаем entrypoint исполняемым
+RUN chmod +x entrypoint.sh
 
-COPY --from=builder /bot/docker/start.sh ./
-
-COPY --from=builder /usr/local/cargo/bin/diesel ./
-COPY --from=builder /bot/migrations/ ./migrations/
-
-
-# Use an unprivileged user.
-USER bot:bot
-
-CMD ["bash", "/bot/start.sh"]
+# Запуск при старте контейнера
+ENTRYPOINT ["./entrypoint.sh"]
